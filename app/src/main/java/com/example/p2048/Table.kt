@@ -5,7 +5,7 @@ import android.widget.LinearLayout
 
 class Table(myLayout: LinearLayout)
 {
-    var a = 0
+    var a = 1
 
 
 
