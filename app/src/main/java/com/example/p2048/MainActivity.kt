@@ -1,32 +1,39 @@
 package com.example.p2048
 
 import android.app.Dialog
+import android.app.PendingIntent.getActivity
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.FragmentActivity
+import com.google.android.gms.tasks.OnCompleteListener
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import java.lang.Math.abs
+import com.google.firebase.database.DatabaseError
 
+import com.google.firebase.database.DataSnapshot
+
+import com.google.firebase.database.ValueEventListener
 
 class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
-    val database = FirebaseDatabase.getInstance()
-    val databaseRef = database.getReference().child("Leaderboard")
+    val database = FirebaseDatabase.getInstance("https://p2048-9b74d-default-rtdb.europe-west1.firebasedatabase.app/")
+    val databaseRef = database.getReference().child("Users")
 
     var score = 0
     lateinit var gestureDetector: GestureDetector
-    var x1:Float = 0.0f
-    var x2:Float = 0.0f
-    var y1:Float = 0.0f
-    var y2:Float = 0.0f
-    var checkMove = false
-    var myLayout: LinearLayout? = null //nie moge inicjalizować
-    var scoreText: TextView? = null
 
+    //to przenieść
+    var checkMove = false
+    var myLayout: LinearLayout? = null
+    var scoreText: TextView? = null
+    var scoreTextOnDialog: TextView? = null
+    var editName: EditText? = null
     var dialog: Dialog? = null
 
     companion object{
@@ -41,14 +48,12 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         gestureDetector = GestureDetector(this, this)
         myLayout = findViewById<LinearLayout>(R.id.myLayout)
         scoreText = findViewById<TextView>(R.id.scoreNumber)
-
+        scoreTextOnDialog = findViewById<TextView>(R.id.textScore)
         dialog = Dialog(this)
 
-        val button = findViewById(R.id.retryButton) as Button
+        var button: Button = findViewById(R.id.retryButton)
         button.setOnClickListener {
-            val intent = intent
-            finish()
-            startActivity(intent)
+            restart()
         }
 
         val overButton = findViewById(R.id.overButton) as Button
@@ -94,6 +99,10 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         gestureDetector.onTouchEvent(event)
         var check = true
+        var x1:Float = 0.0f
+        var x2:Float = 0.0f
+        var y1:Float = 0.0f
+        var y2:Float = 0.0f
         when(event?.action)
         {
             //swipe start
@@ -122,7 +131,7 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     checkMove = false
                     if (rectangles.size == 16) { //Jeśli jest 16 kwadratow -> game over
                         if(isGameOver()) {
-
+                            gameOverDialog()
                         }
                     }
                 }
@@ -324,28 +333,38 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     private fun gameOverDialog() {
         dialog?.setContentView(R.layout.game_over_layout)
-
+        dialog?.show()
+        scoreTextOnDialog = dialog?.findViewById<TextView>(R.id.textScore)
+        editName = dialog?.findViewById<EditText>(R.id.editName)
+        scoreTextOnDialog?.setText(score.toString())
         val saveButton = dialog?.findViewById(R.id.saveButton) as Button
-        saveButton.setOnClickListener {
 
+        saveButton.setOnClickListener {
+            var name = editName?.getText().toString()
+            databaseRef.child(name).setValue(score).addOnCompleteListener {      //add record to the database
+                 Toast.makeText(getApplicationContext(), "High score saved", Toast.LENGTH_SHORT).show() //notification
+            }
         }
 
         val vieButton = dialog?.findViewById(R.id.vieButton) as Button
         vieButton.setOnClickListener {
-
+            dialog?.dismiss()
+            startActivity(Intent(getApplicationContext(), ShowLeaderboard::class.java))
         }
 
         val newGameButton = dialog?.findViewById(R.id.newGameButton) as Button
         newGameButton.setOnClickListener {
-            val intent = intent
-            finish()
-            startActivity(intent)
+            dialog?.dismiss()
+            restart()
         }
-
-
-
-        dialog?.show()
     }
+
+    private fun restart() {
+        val intent = intent
+        finish()
+        startActivity(intent)
+    }
+
 
     override fun onStart() {
         super.onStart()
