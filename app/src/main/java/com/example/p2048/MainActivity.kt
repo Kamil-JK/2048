@@ -1,27 +1,40 @@
 package com.example.p2048
 
-import android.graphics.Rect
+import android.app.Dialog
+import android.app.PendingIntent.getActivity
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.FragmentActivity
+import com.google.android.gms.tasks.OnCompleteListener
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.FirebaseDatabase
 import java.lang.Math.abs
-import java.util.*
+import com.google.firebase.database.DatabaseError
 
+import com.google.firebase.database.DataSnapshot
+
+import com.google.firebase.database.ValueEventListener
 
 class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
-    //var fields = Array(4) {Array(4) {Rectangle} }
+    val database = FirebaseDatabase.getInstance("https://p2048-9b74d-default-rtdb.europe-west1.firebasedatabase.app/")
+    val databaseRef = database.getReference().child("Users")
 
-    var score = 0;
+    var score = 0
     lateinit var gestureDetector: GestureDetector
-    var x1:Float = 0.0f
-    var x2:Float = 0.0f
-    var y1:Float = 0.0f
-    var y2:Float = 0.0f
-    var myLayout: LinearLayout? = null //nie moge inicjalizować
+
+    //to przenieść
+    var checkMove = false
+    var myLayout: LinearLayout? = null
+    var scoreText: TextView? = null
+    var scoreTextOnDialog: TextView? = null
+    var editName: EditText? = null
+    var dialog: Dialog? = null
 
     companion object{
         const val MIN = 100
@@ -31,10 +44,23 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(localClassName, "onCreate")
         setContentView(R.layout.activity_main)
         gestureDetector = GestureDetector(this, this)
         myLayout = findViewById<LinearLayout>(R.id.myLayout)
+        scoreText = findViewById<TextView>(R.id.scoreNumber)
+        scoreTextOnDialog = findViewById<TextView>(R.id.textScore)
+        dialog = Dialog(this)
+
+        var button: Button = findViewById(R.id.retryButton)
+        button.setOnClickListener {
+            restart()
+        }
+
+        val overButton = findViewById(R.id.overButton) as Button
+        overButton.setOnClickListener {
+            gameOverDialog()
+        }
+
         makeNew()
     }
 
@@ -44,7 +70,6 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         imageView.layoutParams= LinearLayout.LayoutParams(240, 240)
         imageView.x= 20F // setting margin from left
         imageView.y= 20F // setting margin from top
-        //imageView.setImageResource(R.drawable.sixteen)
         myLayout?.addView(imageView) // adding image to the layout
 
         var check = true
@@ -66,14 +91,18 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
         }
 
         val rec = Rectangle(randomX, randomY)
-        rec.set(imageView, 2)
+        rec.set(imageView)
         rec.run()
         rectangles.add(rec)
-
     }
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         gestureDetector.onTouchEvent(event)
+        var check = true
+        var x1:Float = 0.0f
+        var x2:Float = 0.0f
+        var y1:Float = 0.0f
+        var y2:Float = 0.0f
         when(event?.action)
         {
             //swipe start
@@ -94,114 +123,267 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
                     if (y2 > y1) onBottom()
                     else onTop()
                 }
+                else check = false
+                if(check && checkMove==true) { //Jeśli był swipe to stwórz nowy i sprawdź usunięte
+                    makeNew()
+                    clear()
+                    scoreText?.setText(score.toString())
+                    checkMove = false
+                    if (rectangles.size == 16) { //Jeśli jest 16 kwadratow -> game over
+                        if(isGameOver()) {
+                            gameOverDialog()
+                        }
+                    }
+                }
             }
         }
         return super.onTouchEvent(event)
     }
 
-    private fun onRight() {
-        //Toast.makeText(this, "right", Toast.LENGTH_SHORT).show()
-        for(rectangle in rectangles){
-            var xv = rectangle.getXPos()
-            var x2 = 3
-            var empty = true
-            var rec2: Rectangle? = null
-            var i = 0
-            var index = 0
-            for(r in rectangles){
-                i++
-                if(r.getYPos()==rectangle.getYPos() && r.getXPos()>xv && r.getXPos()<=x2){ //jeśli ten sam rząd, r po prawej od rec
-                    x2 = r.getXPos() - 1
-                    empty = false
-                    rec2 = r
-                    index = i
+    private fun clear() {
+        //Usun oznaczone
+        var size = rectangles.size
+        for (i in 0..size + 1) {
+            if (i < rectangles.size) {
+                if (rectangles[i].isDeleted()) {
+                    rectangles[i].set(0) //index out of bounds
+                    rectangles.remove(rectangles[i])
                 }
             }
-            if(empty) rectangle.move(3-xv,0)
-            else{
-                rectangle.move(x2-xv,0)
-                rec2?.set(4)
-                //rectangle.set(4)
-                //rectangles.removeAt(index)
+        }
+    }
+
+    private fun onRight() {
+        for(row in 0..3) {//od góry do dołu
+            var col = 4
+            repeat(4){//od prawej kolumny do lewej
+                col--
+                for(rectangle in rectangles){ //pętla po kwadratach
+                    var x2 = 3
+                    var x3 = 0
+                    var check = false
+                    var blockPos = 0
+                    if(!rectangle.isDeleted() && rectangle.getXPos()==col && rectangle.getYPos()==row) { //znajduje wybrany istniejact kwadrat
+                        for(r in rectangles){
+                            if(!r.isDeleted() && r.getYPos()==row && r.getXPos()>col && r.getXPos()<=x2){ //jeśli ten sam rząd i r po prawej od rec
+                                x2 = r.getXPos() - 1
+                            }
+                            if(!r.isDeleted() && r.getYPos()==row && r.getXPos()<col && r.getXPos()>=x3){ //szuka po lewej najbliższego takiego samego
+                                if(r.value==rectangle.value) {
+                                    x3 = r.getXPos()
+                                    check = true    //czy po lewej znaleziono kwadrat z taką samą liczbą?
+                                }
+                                else blockPos = r.getXPos()
+                            }
+                        }
+                        rectangle.move(x2-col,0)//jeśli nie to kwadrat idzie w prawo do napotkanego innego
+                        if(x2-col != 0) checkMove = true
+                        if(check && x3>=blockPos){
+                            for(r in rectangles) {
+                                if(!r.isDeleted() && r.getYPos()==row && r.getXPos()==x3) {//usuwanie po lewej  i podwajanie
+                                    r.delete()
+                                    score += rectangle.double()
+                                    checkMove = true
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        makeNew()
     }
 
     private fun onLeft() {
-        for(rectangle in rectangles){
-            var xv = rectangle.getXPos()
-            var x2 = 0
-            var empty = true
-            for(r in rectangles){
-                if(r.getYPos()==rectangle.getYPos() && r.getXPos()<xv && r.getXPos()>=x2){
-                    x2 = r.getXPos() + 1
-                    empty = false
+        for(row in 0..3) {//od góry do dołu
+            var col = -1
+            repeat(4){//od prawej kolumny do lewej
+                col++
+                for(rectangle in rectangles){ //pętla po kwadratach
+                    var x2 = 0
+                    var x3 = 3
+                    var check = false
+                    var blockPos = 3
+                    if(!rectangle.isDeleted() && rectangle.getXPos()==col && rectangle.getYPos()==row) { //znajduje wybrany istniejact kwadrat
+                        for(r in rectangles){
+                            if(!r.isDeleted() && r.getYPos()==row && r.getXPos()<col && r.getXPos()>=x2){ //jeśli ten sam rząd i r po lewej od rec
+                                x2 = r.getXPos() + 1
+                            }
+                            if(!r.isDeleted() && r.getYPos()==row && r.getXPos()>col && r.getXPos()<=x3){ //szuka po lewej najbliższego takiego samego
+                                if(r.value==rectangle.value) {
+                                    x3 = r.getXPos()
+                                    check = true
+                                }
+                                else blockPos = r.getXPos()
+                            }
+                        }
+                        rectangle.move(x2-col,0)
+                        if(x2-col != 0) checkMove = true
+                        if(check  && x3<=blockPos){
+                            for(r in rectangles) {//usuwanie po prawej i podwajanie
+                                if(!r.isDeleted() && r.getYPos()==row && r.getXPos()==x3) {
+                                    r.delete()
+                                    score += rectangle.double()
+                                    checkMove = true
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            if(empty) rectangle.move(-xv,0)
-            else rectangle.move(x2-xv,0)
         }
-        makeNew()
     }
 
     private fun onTop() {
-        for(rectangle in rectangles){
-            var yv = rectangle.getYPos()
-            var y2 = 0
-            var empty = true
-            for(r in rectangles){
-                if(r.getXPos()==rectangle.getXPos() && r.getYPos()<yv && r.getYPos()>=y2){
-                    y2 = r.getYPos() + 1
-                    empty = false
+        for(col in 0..3) {
+            var row = -1
+            repeat(4){
+                row++
+                for(rectangle in rectangles){
+                    var x2 = 0
+                    var x3 = 3
+                    var check = false
+                    var blockPos = 3
+                    if(!rectangle.isDeleted() && rectangle.getXPos()==col && rectangle.getYPos()==row) {
+                        for(r in rectangles){
+                            if(!r.isDeleted() && r.getXPos()==col && r.getYPos()<row && r.getYPos()>=x2){
+                                x2 = r.getYPos() + 1
+                            }
+                            if(!r.isDeleted() && r.getXPos()==col && r.getYPos()>row && r.getYPos()<=x3){
+                                if(r.value==rectangle.value) {
+                                    x3 = r.getYPos()
+                                    check = true
+                                }
+                                else blockPos = r.getYPos()
+                            }
+                        }
+                        rectangle.move(0, x2-row)
+                        if(x2-row != 0) checkMove = true
+                        if(check && x3<=blockPos){
+                            for(r in rectangles) {//usuwanie po prawej i podwajanie
+                                if(!r.isDeleted() && r.getXPos()==col && r.getYPos()==x3) {
+                                    r.delete()
+                                    score += rectangle.double()
+                                    checkMove = true
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            if(empty) rectangle.move(0, -yv)
-            else rectangle.move(0, y2-yv)
         }
-        makeNew()
     }
 
     private fun onBottom() {
-        for(rectangle in rectangles){
-            var yv = rectangle.getYPos()
-            var y2 = 3
-            var check = true
-            for(r in rectangles){
-                if(r.getXPos()==rectangle.getXPos() && r.getYPos()>yv && r.getYPos()<=y2){ //jeszcze w tym samym wierszu! i chyba trzeba wyłączyć z tego 1 prostokat
-                    y2 = r.getYPos() - 1
-                    check = false
+        for(col in 0..3) {
+            var row = 4
+            repeat(4){
+                row--
+                for(rectangle in rectangles){
+                    var x2 = 3
+                    var x3 = 0
+                    var check = false
+                    var blockPos = 0
+                    if(!rectangle.isDeleted() && rectangle.getXPos()==col && rectangle.getYPos()==row) {
+                        for(r in rectangles){
+                            if(!r.isDeleted() && r.getXPos()==col && r.getYPos()>row && r.getYPos()<=x2){
+                                x2 = r.getYPos() - 1
+                            }
+                            if(!r.isDeleted() && r.getXPos()==col && r.getYPos()<row && r.getYPos()>=x3){
+                                if(r.value==rectangle.value) {
+                                x3 = r.getYPos()
+                                check = true}
+                                else blockPos = r.getYPos()
+                            }
+                        }
+                        rectangle.move(0, x2-row)
+                        if(x2-row != 0) checkMove = true
+                        if(check && x3>=blockPos){
+                            for(r in rectangles) {
+                                if(!r.isDeleted() && r.getXPos()==col && r.getYPos()==x3) {
+                                    r.delete()
+                                    score += rectangle.double()
+                                    checkMove = true
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            if(check) rectangle.move(0, 3-yv)
-            else rectangle.move(0, y2-yv)
         }
-        makeNew()
     }
+
+    private fun isGameOver(): Boolean {
+        for (row in 0..3) {//od góry do dołu
+            var col = -1
+            repeat(4) {//od prawej kolumny do lewej
+                col++
+                for (rectangle in rectangles) { //pętla po kwadratach
+                    if (!rectangle.isDeleted() && rectangle.getXPos() == col && rectangle.getYPos() == row) { //znajduje wybrany istniejact kwadrat
+                        for (r in rectangles) {
+                            if ( r.value == rectangle.value && (r.getYPos() == row + 1 || r.getYPos() == row - 1 || r.getXPos() == col + 1 || r.getXPos() == col - 1 )) { //jeśli jest obok jakiś kwadrat z taką samą wartością to gra toczy się dalej
+                                return false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true
+    }
+
+    private fun gameOverDialog() {
+        dialog?.setContentView(R.layout.game_over_layout)
+        dialog?.show()
+        scoreTextOnDialog = dialog?.findViewById<TextView>(R.id.textScore)
+        editName = dialog?.findViewById<EditText>(R.id.editName)
+        scoreTextOnDialog?.setText(score.toString())
+        val saveButton = dialog?.findViewById(R.id.saveButton) as Button
+
+        saveButton.setOnClickListener {
+            var name = editName?.getText().toString()
+            databaseRef.child(name).setValue(score).addOnCompleteListener {      //add record to the database
+                 Toast.makeText(getApplicationContext(), "High score saved", Toast.LENGTH_SHORT).show() //notification
+            }
+        }
+
+        val vieButton = dialog?.findViewById(R.id.vieButton) as Button
+        vieButton.setOnClickListener {
+            dialog?.dismiss()
+            startActivity(Intent(getApplicationContext(), ShowLeaderboard::class.java))
+        }
+
+        val newGameButton = dialog?.findViewById(R.id.newGameButton) as Button
+        newGameButton.setOnClickListener {
+            dialog?.dismiss()
+            restart()
+        }
+    }
+
+    private fun restart() {
+        val intent = intent
+        finish()
+        startActivity(intent)
+    }
+
 
     override fun onStart() {
         super.onStart()
-        Log.i(localClassName, "onstart")
     }
 
     override fun onResume() {
         super.onResume()
-        Log.i(localClassName, "onresume")
     }
 
     override fun onPause() {
         super.onPause()
-        Log.i(localClassName, "onpause")
     }
 
     override fun onStop() {
         super.onStop()
-        Log.i(localClassName, "onstop")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.i(localClassName, "ondestroy")
     }
 
     override fun onDown(e: MotionEvent?): Boolean {
@@ -228,6 +410,5 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     ): Boolean {
         return false;
     }
-
 
 }
