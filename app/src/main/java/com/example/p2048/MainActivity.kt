@@ -28,7 +28,10 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     var score = 0
     lateinit var gestureDetector: GestureDetector
 
-    //to przenieść
+    var x1:Float = 0.0f //for swipe direction
+    var x2:Float = 0.0f
+    var y1:Float = 0.0f
+    var y2:Float = 0.0f
     var checkMove = false
     var myLayout: LinearLayout? = null
     var scoreText: TextView? = null
@@ -99,10 +102,6 @@ class MainActivity : AppCompatActivity(), GestureDetector.OnGestureListener {
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         gestureDetector.onTouchEvent(event)
         var check = true
-        var x1:Float = 0.0f
-        var x2:Float = 0.0f
-        var y1:Float = 0.0f
-        var y2:Float = 0.0f
         when(event?.action)
         {
             //swipe start
